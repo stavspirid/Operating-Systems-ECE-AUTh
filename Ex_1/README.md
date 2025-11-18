@@ -55,6 +55,9 @@ make uninstall
 make help
 ```
 
+If installed with `make install`, *TinyShell* can be run from anywhere with just `tinyshell`
+
+
 ### Source Code
 *TinyShell* implements a simple Read-Eval-Print Loop (REPL) with the following components:
 - `parseCommand`: turns the shell's input into a vector of tokens (string) with the first one being a command and each one of the rest being an argument  
