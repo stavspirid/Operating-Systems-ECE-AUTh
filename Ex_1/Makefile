@@ -1,5 +1,4 @@
 # TinyShell Makefile
-# Simple build system for the TinyShell project
 
 # Compiler and flags
 CXX = g++
@@ -12,16 +11,13 @@ TARGET = tinyshell
 SOURCE = tinyshell.cpp
 
 # Default target: build release version
-all: release
-
-# Release build (optimized)
-release: $(SOURCE)
+all:
 	@echo "Building TinyShell (Release)..."
 	$(CXX) $(CXXFLAGS) $(RELEASEFLAGS) -o $(TARGET) $(SOURCE)
 	@echo "Build complete! Run with: ./$(TARGET)"
 
 # Debug build (with debug symbols)
-debug: $(SOURCE)
+debug:
 	@echo "Building TinyShell (Debug)..."
 	$(CXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $(TARGET) $(SOURCE)
 	@echo "Debug build complete! Run with: ./$(TARGET)"
@@ -33,12 +29,12 @@ clean:
 	@echo "Clean complete!"
 
 # Run the shell after building
-run: release
+run: all
 	@echo "Starting TinyShell..."
 	./$(TARGET)
 
 # Install to /usr/local/bin (requires sudo)
-install: release
+install: all
 	@echo "Installing TinyShell to /usr/local/bin..."
 	sudo cp $(TARGET) /usr/local/bin/
 	@echo "Installation complete! You can now run 'tinyshell' from anywhere."
@@ -55,14 +51,13 @@ help:
 	@echo "======================"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  make          - Build release version (default)"
-	@echo "  make release  - Build optimized release version"
-	@echo "  make debug    - Build debug version with symbols"
-	@echo "  make clean    - Remove build artifacts"
-	@echo "  make run      - Build and run TinyShell"
-	@echo "  make install  - Install to /usr/local/bin (requires sudo)"
-	@echo "  make uninstall- Remove from /usr/local/bin (requires sudo)"
-	@echo "  make help     - Show this help message"
+	@echo "  make           - Build release version (default)"
+	@echo "  make debug     - Build debug version with symbols"
+	@echo "  make clean     - Remove build artifacts"
+	@echo "  make run       - Build and run TinyShell"
+	@echo "  make install   - Install to /usr/local/bin (requires sudo)"
+	@echo "  make uninstall - Remove from /usr/local/bin (requires sudo)"
+	@echo "  make help      - Show this help message"
 
 # Phony targets (not actual files)
-.PHONY: all release debug clean run install uninstall help
+.PHONY: all debug clean run install uninstall help

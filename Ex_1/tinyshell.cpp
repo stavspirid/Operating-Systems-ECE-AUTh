@@ -149,7 +149,7 @@ int executeCommand(const std::vector<std::string>& args) {
     if (execPath.empty()) {
         std::cerr << COLOR_ERROR << "tinyshell: command not found: " 
                   << args[0] << COLOR_RESET << std::endl;
-        return -1;
+        return 127;		// Unix conversion for "command not found"
     }
     
     // Convert arguments to C-style array to use execve()
@@ -222,10 +222,10 @@ void displayPrompt() {
 int main() {
     std::string line;
     
-    std::cout << "=================================       _____ _____ _____           _____ _____ _____ _____ \n";
-    std::cout << "  Welcome to TinyShell                 |   __|     |   __|   ___   |  _  |  |  |_   _|  |  |\n";
-    std::cout << "  Type 'exit' or press Ctrl+D to quit  |   __|   --|   __|  |___|  |     |  |  | | | |     |\n";
-    std::cout << "=================================      |_____|_____|_____|         |__|__|_____| |_| |__|__|\n\n";
+    std::cout << "=======================================  _____ _____ _____           _____ _____ _____ _____ \n";
+    std::cout << "  Welcome to TinyShell                  |   __|     |   __|   ___   |  _  |  |  |_   _|  |  |\n";
+    std::cout << "  Type 'exit' or press Ctrl+D to quit   |   __|   --|   __|  |___|  |     |  |  | | | |     |\n";
+    std::cout << "======================================= |_____|_____|_____|         |__|__|_____| |_| |__|__|\n\n";
 
     while (true) {
         displayPrompt();
