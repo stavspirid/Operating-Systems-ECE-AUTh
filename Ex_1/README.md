@@ -2,24 +2,24 @@
 *TinyShell* is a very simple (and tiny) Unix shell designed during the course Operating Systems at ECE AUTh winter semester 2025-6.
 ## Quick Start Guide
 Clone the repository from GitHub and go to the `Ex_1` directory (skip this step if already downloaded):
-```Bash
+```shell
 git clone https://github.com/stavspirid/Operating-Systems-ECE-AUTh.git
 cd Ex_1
 ```
 
 Run the `Makefile` to build the *TinyShell* executable:
-```Bash
+```shell
 make
 ```
 Checkout the `Makefile` documentation or run `make help` for other ways to build and install the program.
 
 Now you can run *TinyShell* like this inside the current directory:
-```Bash
+```shell
 ./tinyshell
 ```
 
 All commands (without `sudo` needs) in `$PATH` can now be run inside the *TinyShell* like this:
-```Bash
+```shell
 ls -la          // Will list the names of all files inside current Unix directory
 mkdir test_dir  // Will create a directory named "test_dir"
 ```
@@ -38,7 +38,7 @@ C would be faster, simpler and maybe easier to debug since it is very close to P
 *TinyShell* showcases how shells work under the hood by implementing core functionality such as forking processes, executing binaries, and managing child process lifecycle.
 
 ### Build from Source
-```Bash
+```shell
 // Build the release version:
 make
 // Or build debug version:
