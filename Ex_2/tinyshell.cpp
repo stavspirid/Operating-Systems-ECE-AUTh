@@ -19,6 +19,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <queue>
+#include <array>
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -52,6 +54,34 @@ std::vector<std::string> parseCommand(const std::string& command) {
     }
     
     return tokens;
+}
+
+/**
+ * Parse a command line into piped commands
+ * 
+ * @param line The input command line string
+ * @return Vector of Vectors of piped argument strings
+ */
+std::vector<std::vector<std::string>> splitByPipes(const std::vector<std::string>& tokens) {
+    std::vector<std::vector<std::string>> commands;
+    std::vector<std::string> currentCmd;
+    
+    for (const auto& token : tokens) {
+        if (token == "|") {
+            if (!currentCmd.empty()) {
+                commands.push_back(currentCmd);
+                currentCmd.clear();
+            }
+        } else {
+            currentCmd.push_back(token);
+        }
+    }
+    
+    if (!currentCmd.empty()) {
+        commands.push_back(currentCmd);
+    }
+    
+    return commands;
 }
 
 /**
@@ -147,40 +177,47 @@ int executeCommand(const std::vector<std::string>& args) {
     }
 	
 	std::vector<std::string> cmdArgs;
-	std::queue<std::string> input;
-	std::queue<std::string> output;
+	std::string input;
+	std::string output;
 	bool appendMode = false;
 	
 	for (size_t i = 0; i < args.size(); i++) {
 		if (args[i] == ">") {
-			if (i+1 < args.size() {
-				output.push(args[i+1]);	// Set next argument as output
+			if (i+1 < args.size()) {
+				output = args[i+1];	// Set next argument as output
 				appendMode = false;
 				i++; // Skip filename argument
 			} else {
-				std:cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
+				std::cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
                 return -1;
 			}
 		}
-		else if (args [i] = ">>") {
-			if (i+1 < args.size() {
-				output.push(args[i+1]);	// Set next argument as output
+		else if (args [i] == ">>") {
+			if (i+1 < args.size()) {
+				output = args[i+1];	// Set next argument as output
 				appendMode = true;
 				i++; // Skip filename argument
 			} else {
-				std:cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
+				std::cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
                 return -1;
 			}
 		}
 		else if (args[i] == "<") {
-			if (i+1 < args.size() {
-				input.push(args[i+1]);	// Set next argument as input
+			if (i+1 < args.size()) {
+				input = args[i+1];	// Set next argument as input
 				i++; // Skip filename argument
 			} else {
-				std:cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
+				std::cerr << COLOR_ERROR << "tinyshell: syntax error near unexpected token `newline'" << COLOR_RESET << "\n";
                 return -1;
 			}
-		} else {
+		} 
+		// else if (args[i] == "|") {
+			// if (i+1 < args.size()) {
+				// input = args[i+1];	// Set next argument as input
+				// i++; // Skip filename argument
+			// }
+		// }
+		else {
 			cmdArgs.push_back(args[i]);	// Treat all other arguments as commands
 		}
 	}
@@ -189,7 +226,6 @@ int executeCommand(const std::vector<std::string>& args) {
 		return 0;
 	}
 	
-    
     // Find the executable in PATH
     std::string execPath = findInPath(cmdArgs[0]);
     
@@ -217,12 +253,11 @@ int executeCommand(const std::vector<std::string>& args) {
 		
 		// Handle input (<)
 		if (!input.empty()) {
-			int fd = open(input.front().c_str(),O_RDONLY, 0644);
+			int fd = open(input.c_str(),O_RDONLY, 0644);
 			if (fd < 0) {
-				perror("tinyshell: input error");
-				exit 1;
+				std::cerr << COLOR_ERROR << "tinyshell: input error\n";
+				exit(1);
 			}
-			input.pop();
 			// Replace std input with file input
 			dup2(fd, STDIN_FILENO);
 			close(fd);
@@ -230,18 +265,21 @@ int executeCommand(const std::vector<std::string>& args) {
 		
 		// Handle output (> or >>)
 		if (!output.empty()) {
-			int fd = open(output.front().c_str(), O_WRONLY|O_CREAT|O_TRUNC, 0644);
-			if (fd < 0) {
-				perror("tinyshell: input error");
-				exit 1;
+			int fd;
+			if (appendMode) {	// Operation >>
+				fd = open(output.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+			} else {
+				fd = open(output.c_str(), O_WRONLY|O_CREAT|O_TRUNC, 0644);
 			}
-			output.pop();
+			
+			if (fd < 0) {
+				std::cerr << COLOR_ERROR << "tinyshell: input error\n";
+				exit(1);
+			}
 			// Replace std output with file output
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 		}
-		
-		
 		
         // Child process: execute the command
         execve(execPath.c_str(), argv, environ);
@@ -277,6 +315,82 @@ int executeCommand(const std::vector<std::string>& args) {
     }
     
     return 0;
+}
+
+int executePipeline(std::vector<std::vector<std::string>>& pipeline) {
+	int numCmds = pipeline.size();
+    std::vector<std::array<int, 2>> pipefds(numCmds - 1);	// Need (n-1) pipes for n commands
+    
+	for (int i = 0; i < numCmds; i++) {
+		if (pipeline[i][0] == "exit") {
+			std::cout << "Exiting TinyShell...\n";
+			exit(0);
+		}
+	}
+    // Create all pipes upfront
+    for (int i = 0; i < numCmds - 1; i++) {
+		if (pipe(pipefds[i].data()) == -1) {
+			std::cerr << COLOR_ERROR << "tinyshell: pipe failed" << COLOR_RESET << "\n";
+			return -1;
+		}
+    }
+    
+    // Fork and execute each command
+    for (int i = 0; i < numCmds; i++) {
+        pid_t pid = fork();
+		
+        if (pid < 0) {
+			// Fork failed
+			std::cerr << COLOR_ERROR << "tinyshell: fork failed" 
+					  << COLOR_RESET << std::endl;
+			return -1;
+		}
+        else if (pid == 0) {
+            // CHILD: Setup pipes and execute
+            
+            // If not first command: read from previous pipe
+            if (i > 0) {
+                dup2(pipefds[i-1][0], STDIN_FILENO);
+            }
+            
+            // If not last command: write to current pipe
+            if (i < numCmds - 1) {
+                dup2(pipefds[i][1], STDOUT_FILENO);
+            }
+            
+            // Close ALL pipe fds in child
+            for (int j = 0; j < numCmds - 1; j++) {
+                close(pipefds[j][0]);
+                close(pipefds[j][1]);
+            }
+            
+            // Execute
+            std::string execPath = findInPath(pipeline[i][0]);
+			// If command does not exist
+			if (execPath.empty()) {
+				std::cerr << COLOR_ERROR << "tinyshell: command not found: " 
+						  << pipeline[i][0] << COLOR_RESET << std::endl;
+				exit(127);	// Unix conversion for "command not found"
+			}
+			
+            char** argv = vectorToArgv(pipeline[i]);
+            execve(execPath.c_str(), argv, environ);
+            exit(1);
+        }
+    }
+    
+    // PARENT: Close all pipes
+    for (int i = 0; i < numCmds - 1; i++) {
+        close(pipefds[i][0]);
+        close(pipefds[i][1]);
+    }
+    
+    // Wait for all children
+    for (int i = 0; i < numCmds; i++) {
+        wait(NULL);
+    }
+	
+	return 0;
 }
 
 /**
@@ -322,9 +436,18 @@ int main() {
         
         // Parse and execute command
         std::vector<std::string> args = parseCommand(line);
-        if (!args.empty()) {
-            executeCommand(args);
+        if (args.empty()) {
+			continue;
         }
+		
+		std::vector<std::vector<std::string>> pipeline = splitByPipes(args);
+		
+		if (pipeline.size() == 1) {
+			executeCommand(pipeline[0]);
+		}
+		else {
+			executePipeline(pipeline);
+		}
     }
     
     return 0;
