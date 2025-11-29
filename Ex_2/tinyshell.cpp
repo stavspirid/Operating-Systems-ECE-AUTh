@@ -57,21 +57,33 @@ ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens) {
             }
             currentCmd = ParsedCommand();
         }
-        else if (tokens[i] == ">") {
+        else if (tokens[i] == ">") {	// Redirect Output
             if (i + 1 < tokens.size()) {
                 currentCmd.outputFile = tokens[++i];
                 currentCmd.appendMode = false;
             }
         }
-        else if (tokens[i] == ">>") {
+        else if (tokens[i] == ">>") {	// Redirect and Append Output
             if (i + 1 < tokens.size()) {
                 currentCmd.outputFile = tokens[++i];
                 currentCmd.appendMode = true;
             }
         }
-        else if (tokens[i] == "<") {
+        else if (tokens[i] == "<") {	// Rredirect for Input
             if (i + 1 < tokens.size()) {
                 currentCmd.inputFile = tokens[++i];
+            }
+        }
+        else if (tokens[i] == "2>") {	// Redirect Error Output
+            if (i + 1 < tokens.size()) {
+                currentCmd.errorFile = tokens[++i];
+                currentCmd.appendErrorMode = false;
+            }
+        }
+        else if (tokens[i] == "2>>") {	// Redirect and Append Error Output
+            if (i + 1 < tokens.size()) {
+                currentCmd.errorFile = tokens[++i];
+                currentCmd.appendErrorMode = true;
             }
         }
         else {
@@ -159,7 +171,7 @@ int executeCommand(const ParsedCommand& cmd) {
                           << COLOR_RESET;
                 exit(1);
             }
-            dup2(fd, STDIN_FILENO);
+            dup2(fd, STDIN_FILENO);	// Redirect stdin
             close(fd);
         }
         
@@ -173,7 +185,19 @@ int executeCommand(const ParsedCommand& cmd) {
                           << COLOR_RESET;
                 exit(1);
             }
-            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDOUT_FILENO);	// Redirect stdout
+            close(fd);
+        }
+		
+		if (!cmd.errorFile.empty()) {
+            int flags = O_WRONLY | O_CREAT | (cmd.appendErrorMode ? O_APPEND : O_TRUNC);
+            int fd = open(cmd.errorFile.c_str(), flags, 0644);
+            if (fd < 0) {
+                std::cerr << COLOR_ERROR << "tinyshell: cannot open error file\n" 
+                          << COLOR_RESET;
+                exit(1);
+            }
+            dup2(fd, STDERR_FILENO);	// Redirect stderr
             close(fd);
         }
         

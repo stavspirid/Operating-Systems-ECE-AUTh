@@ -58,3 +58,12 @@ parseCommand and splitByPipes
 ### Piping Examples
 echo "hello world" | tr 'a-z' 'A-Z' | rev
 -> "DLROW OLLEH"
+### Piping + Direction
+echo "hello world" | tr 'a-z' 'A-Z' | rev > file1.txt
+-> file1.txt: "DLROW OLLEH"
+
+### Error Redirection Handling
+ls nonexistent 2> errors.txt
+cat file.txt 2>> errors.txt
+gcc program.c 2>> errors.txt
+cat errors.txt

@@ -27,7 +27,9 @@ struct ParsedCommand {
     std::vector<std::string> args;	// Command and arguments
     std::string inputFile;			// Input redirection file (<)
     std::string outputFile;			// Output redirection file (> or >>)
+	std::string errorFile;        	// For stderr redirection
     bool appendMode = false;		// true for >>, false for >
+	bool appendErrorMode = false; 	// For stderr append (2>>)
     
     ParsedCommand();
 };
