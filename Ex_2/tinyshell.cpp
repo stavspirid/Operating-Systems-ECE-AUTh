@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <errno.h>
+#include "tinyshell.hpp"
 
 // ANSI color codes for better visual feedback
 #define COLOR_PROMPT "\033[1;32m"  // Green
@@ -44,7 +45,7 @@
  * @param line The input command line string
  * @return Vector of argument strings
  */
-std::vector<std::string> parseCommand(const std::string& command) {
+std::vector<std::string> tokenize(const std::string& command) {
     std::vector<std::string> tokens;
     std::istringstream iss(command);
     std::string token;
@@ -435,7 +436,7 @@ int main() {
         }
         
         // Parse and execute command
-        std::vector<std::string> args = parseCommand(line);
+        std::vector<std::string> args = tokenize(line);
         if (args.empty()) {
 			continue;
         }
