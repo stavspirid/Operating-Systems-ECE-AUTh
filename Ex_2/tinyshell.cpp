@@ -29,9 +29,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-// Constructor implementations
-ParsedCommand::ParsedCommand() : appendMode(false) {}
-ParsedPipeline::ParsedPipeline() : hasPipes(false) {}
+ParsedCommand::ParsedCommand(){}
+ParsedPipeline::ParsedPipeline(){}
 
 std::vector<std::string> tokenize(const std::string& line) {
     std::vector<std::string> tokens;
@@ -69,7 +68,7 @@ ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens) {
                 currentCmd.appendMode = true;
             }
         }
-        else if (tokens[i] == "<") {	// Rredirect for Input
+        else if (tokens[i] == "<") {	// Redirect for Input
             if (i + 1 < tokens.size()) {
                 currentCmd.inputFile = tokens[++i];
             }
