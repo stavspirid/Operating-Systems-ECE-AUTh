@@ -95,12 +95,15 @@ Each command with its arguments is stored in a different vector so if piping is 
 
 `executeCommand` is the function that gets called if no pipes are detected in the command.
 `executePipeline` is the function that gets called if there is at least one pipe in the command.
+### Redirection Handler (v2.1)
+Implemented a seperate redirection handler for both command and pipeline execution so "Single Source of Truth" principle is followed. 
+
 ## Examples
 ### Redirection
 ```bash
 echo "Zebra" > inputFile.txt
 echo "Banana" >> inputFile.txt
-"Elephant" >> inputFile.txt
+echo "Elephant" >> inputFile.txt
 cat inputFile.txt
 ```
 Will result in:

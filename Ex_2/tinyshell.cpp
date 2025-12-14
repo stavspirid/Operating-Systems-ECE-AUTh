@@ -19,6 +19,8 @@
  */
 
 #include "tinyshell.hpp"
+#include "utils.hpp"
+#include "parser.hpp"
 #include <iostream>
 #include <sstream>
 #include <cstring>
@@ -31,71 +33,6 @@
 
 ParsedCommand::ParsedCommand(){}
 ParsedPipeline::ParsedPipeline(){}
-
-std::vector<std::string> tokenize(const std::string& line) {
-    std::vector<std::string> tokens;
-    std::istringstream iss(line);
-    std::string token;
-    
-    while (iss >> token) {
-        tokens.push_back(token);
-    }
-    
-    return tokens;
-}
-
-ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens) {
-    ParsedPipeline result;
-    ParsedCommand currentCmd;
-    
-    for (size_t i = 0; i < tokens.size(); i++) {
-        if (tokens[i] == "|") {
-            if (!currentCmd.args.empty()) {
-                result.commands.push_back(currentCmd);
-                result.hasPipes = true;
-            }
-            currentCmd = ParsedCommand();
-        }
-        else if (tokens[i] == ">") {	// Redirect Output
-            if (i + 1 < tokens.size()) {
-                currentCmd.outputFile = tokens[++i];
-                currentCmd.appendMode = false;
-            }
-        }
-        else if (tokens[i] == ">>") {	// Redirect and Append Output
-            if (i + 1 < tokens.size()) {
-                currentCmd.outputFile = tokens[++i];
-                currentCmd.appendMode = true;
-            }
-        }
-        else if (tokens[i] == "<") {	// Redirect for Input
-            if (i + 1 < tokens.size()) {
-                currentCmd.inputFile = tokens[++i];
-            }
-        }
-        else if (tokens[i] == "2>") {	// Redirect Error Output
-            if (i + 1 < tokens.size()) {
-                currentCmd.errorFile = tokens[++i];
-                currentCmd.appendErrorMode = false;
-            }
-        }
-        else if (tokens[i] == "2>>") {	// Redirect and Append Error Output
-            if (i + 1 < tokens.size()) {
-                currentCmd.errorFile = tokens[++i];
-                currentCmd.appendErrorMode = true;
-            }
-        }
-        else {
-            currentCmd.args.push_back(tokens[i]);
-        }
-    }
-    
-    if (!currentCmd.args.empty()) {
-        result.commands.push_back(currentCmd);
-    }
-    
-    return result;
-}
 
 std::string findInPath(const std::string& command) {
     if (command.find('/') != std::string::npos) {
@@ -124,45 +61,7 @@ std::string findInPath(const std::string& command) {
     return "";
 }
 
-char** vectorToArgv(const std::vector<std::string>& args) {
-    char** argv = new char*[args.size() + 1];
-    
-    for (size_t i = 0; i < args.size(); ++i) {
-        argv[i] = new char[args[i].length() + 1];
-        strcpy(argv[i], args[i].c_str());
-    }
-    
-    argv[args.size()] = nullptr;
-    return argv;
-}
-
-void freeArgv(char** argv, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-        delete[] argv[i];
-    }
-    delete[] argv;
-}
-
-int executeCommand(const ParsedCommand& cmd) {
-    if (cmd.args.empty()) return 0;
-    
-    std::string execPath = findInPath(cmd.args[0]);
-    if (execPath.empty()) {
-        std::cerr << COLOR_ERROR << "tinyshell: command not found: " 
-                  << cmd.args[0] << COLOR_RESET << "\n";
-        return 127;
-    }
-    
-    char** argv = vectorToArgv(cmd.args);
-    pid_t pid = fork();
-    
-    if (pid < 0) {
-        std::cerr << COLOR_ERROR << "tinyshell: fork failed" << COLOR_RESET << "\n";
-        freeArgv(argv, cmd.args.size());
-        return -1;
-    }
-    else if (pid == 0) {
-        // Handle input redirection
+void setupRedirections(const ParsedCommand& cmd) {
         if (!cmd.inputFile.empty()) {	// If "<"
             int fd = open(cmd.inputFile.c_str(), O_RDONLY);
             if (fd < 0) {
@@ -188,6 +87,7 @@ int executeCommand(const ParsedCommand& cmd) {
             close(fd);
         }
 		
+        // Handle error redirection
 		if (!cmd.errorFile.empty()) {
             int flags = O_WRONLY | O_CREAT | (cmd.appendErrorMode ? O_APPEND : O_TRUNC);
             int fd = open(cmd.errorFile.c_str(), flags, 0644);
@@ -199,8 +99,32 @@ int executeCommand(const ParsedCommand& cmd) {
             dup2(fd, STDERR_FILENO);	// Redirect stderr
             close(fd);
         }
+}
+
+int executeCommand(const ParsedCommand& cmd) {
+    if (cmd.args.empty()) return 0;
+    
+    std::string execPath = findInPath(cmd.args[0]);
+    if (execPath.empty()) {
+        std::cerr << COLOR_ERROR << "tinyshell: command not found: " 
+                  << cmd.args[0] << COLOR_RESET << "\n";
+        return 127;
+    }
+    
+    char** argv = vectorToArgv(cmd.args);
+    pid_t pid = fork();
+    
+    if (pid < 0) {
+        std::cerr << COLOR_ERROR << "tinyshell: fork failed" << COLOR_RESET << "\n";
+        freeArgv(argv, cmd.args.size());
+        return -1;
+    }
+    else if (pid == 0) {
+        // Handle redirections
+        setupRedirections(cmd);
         
-        execve(execPath.c_str(), argv, environ);
+        execve(execPath.c_str(), argv, environ);    // Execute
+        // If command does not exist
         std::cerr << COLOR_ERROR << "tinyshell: execve failed" << COLOR_RESET << "\n";
         exit(1);
     }
@@ -266,30 +190,8 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline) {
                 close(pipefds[j][1]);
             }
             
-            // Handle input redirection
-            if (!pipeline[i].inputFile.empty()) {
-                int fd = open(pipeline[i].inputFile.c_str(), O_RDONLY);
-                if (fd < 0) {
-                    std::cerr << COLOR_ERROR << "tinyshell: cannot open input file\n" 
-                              << COLOR_RESET;
-                    exit(1);
-                }
-                dup2(fd, STDIN_FILENO);
-                close(fd);
-            }
-            
-            // Handle output redirection
-            if (!pipeline[i].outputFile.empty()) {
-                int flags = O_WRONLY | O_CREAT | (pipeline[i].appendMode ? O_APPEND : O_TRUNC);
-                int fd = open(pipeline[i].outputFile.c_str(), flags, 0644);
-                if (fd < 0) {
-                    std::cerr << COLOR_ERROR << "tinyshell: cannot open output file\n" 
-                              << COLOR_RESET;
-                    exit(1);
-                }
-                dup2(fd, STDOUT_FILENO);
-                close(fd);
-            }
+            // Handle redirections
+            setupRedirections(pipeline[i]);
             
             // Find and execute
             std::string execPath = findInPath(pipeline[i].args[0]);

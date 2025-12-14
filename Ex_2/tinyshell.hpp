@@ -10,6 +10,7 @@
 #ifndef TINYSHELL_HPP
 #define TINYSHELL_HPP
 
+#include "parser.hpp"
 #include <string>
 #include <vector>
 #include <array>
@@ -21,46 +22,6 @@
 #define COLOR_INFO "\033[1;36m"
 
 /**
- * Structure representing a single parsed command with redirections
- */
-struct ParsedCommand {
-    std::vector<std::string> args;	// Command and arguments
-    std::string inputFile;			// Input redirection file (<)
-    std::string outputFile;			// Output redirection file (> or >>)
-	std::string errorFile;        	// For stderr redirection (2>)
-    bool appendMode = false;		// true for >>, false for >
-	bool appendErrorMode = false; 	// For stderr append (2>>)
-    
-    ParsedCommand();
-};
-
-/**
- * Structure representing a complete pipeline
- */
-struct ParsedPipeline {
-    std::vector<ParsedCommand> commands;// All commands in the pipeline
-    bool hasPipes = false;				// true if pipeline contains pipes
-    
-    ParsedPipeline();
-};
-
-/**
- * Parse command line into tokens
- * 
- * @param line Input command line string
- * @return Vector of tokens
- */
-std::vector<std::string> tokenize(const std::string& line);
-
-/**
- * Parse tokens into pipeline with redirections
- * 
- * @param tokens Vector of tokens from tokenize()
- * @return Parsed pipeline structure
- */
-ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens);
-
-/**
  * Search for executable in PATH environment variable
  * 
  * @param command Command name to search for
@@ -69,20 +30,11 @@ ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens);
 std::string findInPath(const std::string& command);
 
 /**
- * Convert vector of strings to C-style argv array
+ * Setup input/output/error redirections for a command
  * 
- * @param args Vector of argument strings
- * @return Dynamically allocated argv array (must be freed with freeArgv)
+ * @param cmd Parsed command structure
  */
-char** vectorToArgv(const std::vector<std::string>& args);
-
-/**
- * Free memory allocated for argv array
- * 
- * @param argv Array to free
- * @param size Number of elements in array
- */
-void freeArgv(char** argv, size_t size);
+void setupRedirections(const ParsedCommand& cmd);
 
 /**
  * Execute a single command with redirections

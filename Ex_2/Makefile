@@ -6,20 +6,23 @@ CXXFLAGS = -std=c++11 -Wall -Wextra -pedantic
 DEBUGFLAGS = -g -O0
 RELEASEFLAGS = -O2
 
+# Source files
+SOURCES = tinyshell.cpp parser.cpp
+HEADERS = tinyshell.hpp parser.hpp utils.hpp
+
 # Target executable
 TARGET = tinyshell
-SOURCE = tinyshell.cpp
 
 # Default target: build release version
 all:
 	@echo "Building TinyShell (Release)..."
-	$(CXX) $(CXXFLAGS) $(RELEASEFLAGS) -o $(TARGET) $(SOURCE)
+	$(CXX) $(CXXFLAGS) $(RELEASEFLAGS) -o $(TARGET) $(SOURCES)
 	@echo "Build complete! Run with: ./$(TARGET)"
 
 # Debug build (with debug symbols)
 debug:
 	@echo "Building TinyShell (Debug)..."
-	$(CXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $(TARGET) $(SOURCE)
+	$(CXX) $(CXXFLAGS) $(DEBUGFLAGS) -o $(TARGET) $(SOURCES)
 	@echo "Debug build complete! Run with: ./$(TARGET)"
 
 # Clean build artifacts
