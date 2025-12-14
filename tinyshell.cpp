@@ -21,6 +21,7 @@
 #include "tinyshell.hpp"
 #include "utils.hpp"
 #include "parser.hpp"
+#include "jobs.hpp"
 #include <iostream>
 #include <sstream>
 #include <cstring>
@@ -30,6 +31,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <signal.h>
 
 ParsedCommand::ParsedCommand(){}
 ParsedPipeline::ParsedPipeline(){}
@@ -62,43 +64,43 @@ std::string findInPath(const std::string& command) {
 }
 
 void setupRedirections(const ParsedCommand& cmd) {
-        if (!cmd.inputFile.empty()) {	// If "<"
-            int fd = open(cmd.inputFile.c_str(), O_RDONLY);
-            if (fd < 0) {
-                std::cerr << COLOR_ERROR << "tinyshell: cannot open input file\n" 
-                          << COLOR_RESET;
-                exit(1);
-            }
-            dup2(fd, STDIN_FILENO);	// Redirect stdin
-            close(fd);
+    if (!cmd.inputFile.empty()) {	// If "<"
+        int fd = open(cmd.inputFile.c_str(), O_RDONLY);
+        if (fd < 0) {
+            std::cerr << COLOR_ERROR << "tinyshell: cannot open input file\n" 
+                        << COLOR_RESET;
+            exit(1);
         }
-        
-        // Handle output redirection
-        if (!cmd.outputFile.empty()) {	// If ">" or ">>"
-			// Append or Truncate based on append flag of current command
-            int flags = O_WRONLY | O_CREAT | (cmd.appendMode ? O_APPEND : O_TRUNC);
-            int fd = open(cmd.outputFile.c_str(), flags, 0644);
-            if (fd < 0) {
-                std::cerr << COLOR_ERROR << "tinyshell: cannot open output file\n" 
-                          << COLOR_RESET;
-                exit(1);
-            }
-            dup2(fd, STDOUT_FILENO);	// Redirect stdout
-            close(fd);
+        dup2(fd, STDIN_FILENO);	// Redirect stdin
+        close(fd);
+    }
+    
+    // Handle output redirection
+    if (!cmd.outputFile.empty()) {	// If ">" or ">>"
+        // Append or Truncate based on append flag of current command
+        int flags = O_WRONLY | O_CREAT | (cmd.appendMode ? O_APPEND : O_TRUNC);
+        int fd = open(cmd.outputFile.c_str(), flags, 0644);
+        if (fd < 0) {
+            std::cerr << COLOR_ERROR << "tinyshell: cannot open output file\n" 
+                        << COLOR_RESET;
+            exit(1);
         }
-		
-        // Handle error redirection
-		if (!cmd.errorFile.empty()) {
-            int flags = O_WRONLY | O_CREAT | (cmd.appendErrorMode ? O_APPEND : O_TRUNC);
-            int fd = open(cmd.errorFile.c_str(), flags, 0644);
-            if (fd < 0) {
-                std::cerr << COLOR_ERROR << "tinyshell: cannot open error file\n" 
-                          << COLOR_RESET;
-                exit(1);
-            }
-            dup2(fd, STDERR_FILENO);	// Redirect stderr
-            close(fd);
+        dup2(fd, STDOUT_FILENO);	// Redirect stdout
+        close(fd);
+    }
+    
+    // Handle error redirection
+    if (!cmd.errorFile.empty()) {
+        int flags = O_WRONLY | O_CREAT | (cmd.appendErrorMode ? O_APPEND : O_TRUNC);
+        int fd = open(cmd.errorFile.c_str(), flags, 0644);
+        if (fd < 0) {
+            std::cerr << COLOR_ERROR << "tinyshell: cannot open error file\n" 
+                        << COLOR_RESET;
+            exit(1);
         }
+        dup2(fd, STDERR_FILENO);	// Redirect stderr
+        close(fd);
+    }
 }
 
 int executeCommand(const ParsedCommand& cmd) {
@@ -115,38 +117,70 @@ int executeCommand(const ParsedCommand& cmd) {
     pid_t pid = fork();
     
     if (pid < 0) {
-        std::cerr << COLOR_ERROR << "tinyshell: fork failed" << COLOR_RESET << "\n";
+        std::cerr << COLOR_ERROR << "tinyshell: fork failed" 
+                  << COLOR_RESET << "\n";
         freeArgv(argv, cmd.args.size());
         return -1;
     }
     else if (pid == 0) {
+        // Child Process should be in its own process group
+        setpgid(0, 0);  // Set process group ID - Group Leader
+
+        if (!cmd.isBackground) {
+            tcsetpgrp(STDIN_FILENO, getpid());  // Give terminal control to child
+        }
+
         // Handle redirections
         setupRedirections(cmd);
         
         execve(execPath.c_str(), argv, environ);    // Execute
         // If command does not exist
-        std::cerr << COLOR_ERROR << "tinyshell: execve failed" << COLOR_RESET << "\n";
+        std::cerr << COLOR_ERROR << "tinyshell: execve failed" 
+                  << COLOR_RESET << "\n";
+        // freweArgv(argv, cmd.args.size());  // SHOULD I FREE HERE?
         exit(1);
     }
     else {
-        int status;
-        waitpid(pid, &status, 0);
-        freeArgv(argv, cmd.args.size());
-        
-        if (WIFEXITED(status)) {
-            int exitCode = WEXITSTATUS(status);
-            if (exitCode != 0) {
-                std::cout << COLOR_INFO << "[Process exited with code: " 
-                          << exitCode << "]" << COLOR_RESET << "\n";
+        setpgid(pid, pid); // Set child's process group ID in parent
+
+        if (!cmd.isBackground) {
+            tcsetpgrp(STDIN_FILENO, getpid());  // Give terminal control to parent
+
+            int status;
+            waitpid(pid, &status, 0);
+            freeArgv(argv, cmd.args.size());
+
+            // Restore terminal control to shell
+            tcsetpgrp(STDIN_FILENO, getpgid(0));
+            
+            if (WIFEXITED(status)) {
+                int exitCode = WEXITSTATUS(status);
+                if (exitCode != 0) {
+                    std::cout << COLOR_INFO << "[Process exited with code: " 
+                            << exitCode << "]" << COLOR_RESET << "\n";
+                }
+                return exitCode;
             }
-            return exitCode;
+            else if (WIFSIGNALED(status)) {
+                int signal = WTERMSIG(status);
+                std::cout << COLOR_ERROR << "[Process terminated by signal: " 
+                        << signal << "]" << COLOR_RESET << "\n";
+                return 128 + signal;
+            }
         }
-        else if (WIFSIGNALED(status)) {
-            int signal = WTERMSIG(status);
-            std::cout << COLOR_ERROR << "[Process terminated by signal: " 
-                      << signal << "]" << COLOR_RESET << "\n";
-            return 128 + signal;
+        else {
+            Job job;
+            job.jobId = nextJobId++;
+            job.pgid = pid;
+            job.command = cmd.args[0];
+            job.state = RUNNING;
+            job.pids.push_back(pid);
+            jobTable.push_back(job);
+            
+            std::cout << "[" << job.jobId << "] " << pid << "\n";
         }
+        
+        
     }
     
     return 0;
@@ -167,6 +201,7 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline) {
     // Fork and execute each command
     for (int i = 0; i < numCmds; i++) {
         pid_t pid = fork();
+        int pgid = setpgid(pid, 0); // Set process group ID
         
         if (pid < 0) {
             std::cerr << COLOR_ERROR << "tinyshell: fork failed" << COLOR_RESET << "\n";

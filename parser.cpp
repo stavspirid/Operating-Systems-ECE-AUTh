@@ -17,7 +17,11 @@ ParsedPipeline parseCommandLine(const std::vector<std::string>& tokens) {
     ParsedCommand currentCmd;
     
     for (size_t i = 0; i < tokens.size(); i++) {
-        if (tokens[i] == "|") {
+        if (tokens[i] == "&" && i == tokens.size() - 1) { // Background Execution
+            result.isBackground = true;
+            continue;   // Do not add "&"" to args
+        }
+        else if (tokens[i] == "|") {
             if (!currentCmd.args.empty()) {
                 result.commands.push_back(currentCmd);
                 result.hasPipes = true;

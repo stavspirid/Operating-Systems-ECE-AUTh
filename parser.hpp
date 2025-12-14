@@ -14,6 +14,7 @@ struct ParsedCommand {
 	std::string errorFile;        	// For stderr redirection (2>)
     bool appendMode = false;		// true for >>, false for >
 	bool appendErrorMode = false; 	// For stderr append (2>>)
+    bool isBackground = false;      // true if command is to be run in background (&)
     
     ParsedCommand();
 };
@@ -24,6 +25,7 @@ struct ParsedCommand {
 struct ParsedPipeline {
     std::vector<ParsedCommand> commands;// All commands in the pipeline
     bool hasPipes = false;				// true if pipeline contains pipes
+    bool isBackground = false;          // true if pipeline is to be run in background (&)
     
     ParsedPipeline();
 };
