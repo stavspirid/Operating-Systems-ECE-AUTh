@@ -1,7 +1,7 @@
 # TinyShell
 _TinyShell_ is a very simple (hence tiny) Unix shell designed during the course Operating Systems at ECE AUTh winter semester 2025-6.
 
-This is **version 2.0** of *TinyShell*. Learn more about what's new on the *Upgrades and Updates* section.
+This is **version 3.0** of *TinyShell*. Learn more about what's new on the *Upgrades and Updates* section.
 ## Quick Start Guide
 Clone the repository from GitHub (skip this step if already downloaded):
 ```shell
