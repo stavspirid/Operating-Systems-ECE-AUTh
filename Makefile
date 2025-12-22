@@ -7,8 +7,8 @@ DEBUGFLAGS = -g -O0
 RELEASEFLAGS = -O2
 
 # Source files
-SOURCES = tinyshell.cpp parser.cpp
-HEADERS = tinyshell.hpp parser.hpp utils.hpp
+SOURCES = tinyshell.cpp parser.cpp jobs.cpp
+HEADERS = tinyshell.hpp parser.hpp utils.hpp jobs.hpp
 
 # Target executable
 TARGET = tinyshell

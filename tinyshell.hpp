@@ -57,4 +57,60 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline);
  */
 void displayPrompt();
 
+/**
+ * Initialize the shell environment
+ * Sets up signal handlers and terminal control
+ */
+void init_shell();
+
+/**
+ * Signal handler for SIGCHLD (child process status change)
+ * 
+ * @param sig Signal number
+ */
+void sigchld_handler(int sig);
+
+/**
+ * Signal handler for SIGTSTP (terminal stop signal)
+ * 
+ * @param sig Signal number
+ */
+void sigtstp_handler(int sig);
+
+/**
+ * Signal handler for SIGINT (interrupt signal)
+ * 
+ * @param sig Signal number
+ */
+void sigint_handler(int sig);
+
+/**
+ * Check and update status changes for all background jobs
+ * Notifies user of completed or stopped jobs
+ */
+void check_job_status_changes();
+
+/**
+ * Built-in command: fg - bring job to foreground
+ * 
+ * @param args Command arguments (job ID)
+ * @return Exit code
+ */
+int builtin_fg(const std::vector<std::string>& args);
+
+/**
+ * Built-in command: bg - resume job in background
+ * 
+ * @param args Command arguments (job ID)
+ * @return Exit code
+ */
+int builtin_bg(const std::vector<std::string>& args);
+
+/**
+ * Built-in command: jobs - list all jobs
+ * 
+ * @return Exit code
+ */
+int builtin_jobs();
+
 #endif // TINYSHELL_HPP

@@ -13,6 +13,7 @@
  * - EOF and 'exit' command support
  * - Piping support
  * - Input/Output redirection
+ * - Job control (fg, bg, jobs, CTRL+Z)
  * 
  * Author: TinyShell Project
  * Platform: Linux (POSIX-compliant systems)
@@ -32,6 +33,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <signal.h>
+
+// Global variables for job management
+std::vector<Job> jobTable;
+int nextJobId = 1;
+volatile sig_atomic_t job_status_changed = 0;
+pid_t shell_pgid;
+int shell_terminal;
+bool shell_is_interactive;
 
 ParsedCommand::ParsedCommand(){}
 ParsedPipeline::ParsedPipeline(){}
@@ -103,8 +112,258 @@ void setupRedirections(const ParsedCommand& cmd) {
     }
 }
 
+// Signal handler for SIGCHLD - handles child process state changes
+void sigchld_handler(int sig) {
+    int saved_errno = errno;
+    pid_t pid;
+    int status;
+    
+    // Loop to handle all pending child status changes
+    while (1) {
+        // Retry waitpid if interrupted by another signal
+        do {
+            errno = 0;
+            pid = waitpid(-1, &status, WNOHANG | WUNTRACED | WCONTINUED);
+        } while (pid < 0 && errno == EINTR);
+        
+        // No more children to reap
+        if (pid <= 0) {
+            errno = saved_errno;
+            return;
+        }
+        
+        Job* job = getJobByPgid(pid);
+        
+        if (job) {
+            if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                job->state = DONE;
+                job_status_changed = 1;
+            } else if (WIFSTOPPED(status)) {
+                job->state = STOPPED;
+                job_status_changed = 1;
+            } else if (WIFCONTINUED(status)) {
+                job->state = RUNNING;
+                job_status_changed = 1;
+            }
+        }
+    }
+}
+
+// Check and print job status changes (called from main loop)
+void check_job_status_changes() {
+    if (!job_status_changed) {
+        return;
+    }
+    
+    job_status_changed = 0;
+    
+    // Check all jobs for status changes
+    for (auto it = jobTable.begin(); it != jobTable.end(); ) {
+        if (it->state == DONE && !it->notified) {
+            // Print completion message in bash format (only once)
+            std::cout << "[" << it->jobId << "]";
+            if (it->is_current) {
+                std::cout << "+";
+            } else {
+                std::cout << " ";
+            }
+            std::cout << " Done        " << it->command << std::endl;
+            it->notified = true;
+            it = jobTable.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// Signal handler for SIGTSTP (CTRL+Z)
+void sigtstp_handler(int sig) {
+    // Do nothing - let the foreground process group handle it
+}
+
+// Signal handler for SIGINT (CTRL+C)
+void sigint_handler(int sig) {
+    // Do nothing - let the foreground process group handle it
+}
+
+// Initialize shell - MUST be called before any job control operations
+void init_shell() {
+    shell_terminal = STDIN_FILENO;
+    shell_is_interactive = isatty(shell_terminal);
+    
+    if (shell_is_interactive) {
+        // Loop until we are in the foreground
+        while (tcgetpgrp(shell_terminal) != (shell_pgid = getpgrp()))
+            kill(-shell_pgid, SIGTTIN);
+        
+        // Setup signal handlers
+        signal(SIGINT, sigint_handler);
+        signal(SIGQUIT, SIG_IGN);
+        signal(SIGTSTP, sigtstp_handler);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+        signal(SIGCHLD, sigchld_handler);
+        
+        // Put shell in its own process group
+        shell_pgid = getpid();
+        if (setpgid(shell_pgid, shell_pgid) < 0) {
+            perror("Couldn't put the shell in its own process group");
+            exit(1);
+        }
+        
+        // Take control of the terminal
+        tcsetpgrp(shell_terminal, shell_pgid);
+    }
+}
+
+// Built-in: fg command
+int builtin_fg(const std::vector<std::string>& args) {
+    Job* job = nullptr;
+    
+    if (args.size() > 1) {
+        // Parse job specification: %N or just N
+        std::string jobSpec = args[1];
+        int jobId;
+        
+        if (jobSpec[0] == '%') {
+            jobId = atoi(jobSpec.c_str() + 1);
+        } else {
+            jobId = atoi(jobSpec.c_str());
+        }
+        
+        job = getJob(jobId);
+        if (!job) {
+            std::cerr << COLOR_ERROR << "tinyshell: fg: %" << jobId 
+                      << ": no such job" << COLOR_RESET << "\n";
+            return 1;
+        }
+    } else {
+        // Get most recent job
+        job = getMostRecentJob();
+        if (!job) {
+            std::cerr << COLOR_ERROR << "tinyshell: fg: current: no such job" 
+                      << COLOR_RESET << "\n";
+            return 1;
+        }
+    }
+    
+    // Mark this job as current
+    markJobAsCurrent(job->jobId);
+    
+    // Print the command being foregrounded
+    std::cout << job->command << std::endl;
+    
+    // Give terminal control to the job
+    tcsetpgrp(shell_terminal, job->pgid);
+    
+    // Continue the job if it was stopped
+    if (job->state == STOPPED) {
+        kill(-job->pgid, SIGCONT);
+    }
+    
+    job->state = RUNNING;
+    
+    // Wait for job to complete or stop
+    int status;
+    pid_t pid;
+    while ((pid = waitpid(-job->pgid, &status, WUNTRACED)) > 0) {
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            // Job terminated
+            removeJob(job->jobId);
+            break;
+        } else if (WIFSTOPPED(status)) {
+            // Job stopped (CTRL+Z) - print in bash format
+            job->state = STOPPED;
+            std::cout << "\n[" << job->jobId << "]";
+            if (job->is_current) {
+                std::cout << "+";
+            } else {
+                std::cout << " ";
+            }
+            std::cout << " Stopped         " << job->command << std::endl;
+            break;
+        }
+    }
+    
+    // Restore terminal control to shell
+    tcsetpgrp(shell_terminal, shell_pgid);
+    
+    return 0;
+}
+
+// Built-in: bg command
+int builtin_bg(const std::vector<std::string>& args) {
+    Job* job = nullptr;
+    
+    if (args.size() > 1) {
+        // Parse job specification: %N or just N
+        std::string jobSpec = args[1];
+        int jobId;
+        
+        if (jobSpec[0] == '%') {
+            jobId = atoi(jobSpec.c_str() + 1);
+        } else {
+            jobId = atoi(jobSpec.c_str());
+        }
+        
+        job = getJob(jobId);
+        if (!job) {
+            std::cerr << COLOR_ERROR << "tinyshell: bg: %" << jobId 
+                      << ": no such job" << COLOR_RESET << "\n";
+            return 1;
+        }
+    } else {
+        // Get most recent job
+        job = getMostRecentJob();
+        if (!job) {
+            std::cerr << COLOR_ERROR << "tinyshell: bg: current: no such job" 
+                      << COLOR_RESET << "\n";
+            return 1;
+        }
+    }
+    
+    if (job->state != STOPPED) {
+        std::cerr << COLOR_ERROR << "tinyshell: bg: job " << job->jobId 
+                  << " already in background" << COLOR_RESET << "\n";
+        return 1;
+    }
+    
+    // Mark this job as current
+    markJobAsCurrent(job->jobId);
+    
+    // Print in bash format: [1]+ command &
+    std::cout << "[" << job->jobId << "]";
+    if (job->is_current) {
+        std::cout << "+";
+    } else {
+        std::cout << " ";
+    }
+    std::cout << " " << job->command << " &" << std::endl;
+    
+    // Continue the job in background
+    kill(-job->pgid, SIGCONT);
+    job->state = RUNNING;
+    
+    return 0;
+}
+
+// Built-in: jobs command
+int builtin_jobs() {
+    printJobs();
+    return 0;
+}
+
 int executeCommand(const ParsedCommand& cmd) {
     if (cmd.args.empty()) return 0;
+    
+    // Check for built-in commands
+    if (cmd.args[0] == "jobs") {
+        return builtin_jobs();
+    } else if (cmd.args[0] == "fg") {   
+        return builtin_fg(cmd.args);
+    } else if (cmd.args[0] == "bg") {
+        return builtin_bg(cmd.args);
+    }
     
     std::string execPath = findInPath(cmd.args[0]);
     if (execPath.empty()) {
@@ -123,64 +382,108 @@ int executeCommand(const ParsedCommand& cmd) {
         return -1;
     }
     else if (pid == 0) {
-        // Child Process should be in its own process group
-        setpgid(0, 0);  // Set process group ID - Group Leader
-
+        // Child Process
+        
+        // Put child in its own process group
+        pid_t child_pgid = getpid();
+        setpgid(0, child_pgid);
+        
+        // If foreground, give terminal control to child
         if (!cmd.isBackground) {
-            tcsetpgrp(STDIN_FILENO, getpid());  // Give terminal control to child
+            tcsetpgrp(shell_terminal, child_pgid);
         }
-
+        
+        // Set default signal handlers for child
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGTTIN, SIG_DFL);
+        signal(SIGTTOU, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        
         // Handle redirections
         setupRedirections(cmd);
         
-        execve(execPath.c_str(), argv, environ);    // Execute
-        // If command does not exist
+        execve(execPath.c_str(), argv, environ);
         std::cerr << COLOR_ERROR << "tinyshell: execve failed" 
                   << COLOR_RESET << "\n";
-        // freweArgv(argv, cmd.args.size());  // SHOULD I FREE HERE?
         exit(1);
     }
     else {
-        setpgid(pid, pid); // Set child's process group ID in parent
-
-        if (!cmd.isBackground) {
-            tcsetpgrp(STDIN_FILENO, getpid());  // Give terminal control to parent
-
-            int status;
-            waitpid(pid, &status, 0);
+        // Parent Process
+        
+        // Put child in its own process group
+        setpgid(pid, pid);
+        
+        if (cmd.isBackground) {
+            // Background execution
+            std::vector<pid_t> pids;
+            pids.push_back(pid);
+            
+            // Build full command string with arguments
+            std::string fullCommand;
+            for (size_t i = 0; i < cmd.args.size(); i++) {
+                if (i > 0) fullCommand += " ";
+                fullCommand += cmd.args[i];
+            }
+            
+            addJob(pid, fullCommand, RUNNING, pids);
             freeArgv(argv, cmd.args.size());
-
-            // Restore terminal control to shell
-            tcsetpgrp(STDIN_FILENO, getpgid(0));
+        } else {
+            // Foreground execution
+            // Give terminal to child
+            tcsetpgrp(shell_terminal, pid);
             
-            if (WIFEXITED(status)) {
-                int exitCode = WEXITSTATUS(status);
-                if (exitCode != 0) {
-                    std::cout << COLOR_INFO << "[Process exited with code: " 
-                            << exitCode << "]" << COLOR_RESET << "\n";
+            int status;
+            pid_t wait_result;
+            
+            // Wait for child
+            while ((wait_result = waitpid(pid, &status, WUNTRACED)) > 0) {
+                if (WIFEXITED(status)) {
+                    int exitCode = WEXITSTATUS(status);
+                    if (exitCode != 0) {
+                        std::cout << COLOR_INFO << "[Process exited with code: " 
+                                << exitCode << "]" << COLOR_RESET << "\n";
+                    }
+                    break;
+                } else if (WIFSIGNALED(status)) {
+                    int signal = WTERMSIG(status);
+                    std::cout << COLOR_ERROR << "[Process terminated by signal: " 
+                            << signal << "]" << COLOR_RESET << "\n";
+                    break;
+                } else if (WIFSTOPPED(status)) {
+                    // Process was stopped (CTRL+Z)
+                    std::vector<pid_t> pids;
+                    pids.push_back(pid);
+                    
+                    // Build full command string with arguments
+                    std::string fullCommand;
+                    for (size_t i = 0; i < cmd.args.size(); i++) {
+                        if (i > 0) fullCommand += " ";
+                        fullCommand += cmd.args[i];
+                    }
+                    
+                    addJob(pid, fullCommand, STOPPED, pids);
+                    
+                    // Get the job we just added to print status
+                    Job* job = getJobByPgid(pid);
+                    if (job) {
+                        std::cout << "\n[" << job->jobId << "]";
+                        if (job->is_current) {
+                            std::cout << "+";
+                        } else {
+                            std::cout << " ";
+                        }
+                        std::cout << " Stopped         " << job->command << std::endl;
+                    }
+                    break;
                 }
-                return exitCode;
             }
-            else if (WIFSIGNALED(status)) {
-                int signal = WTERMSIG(status);
-                std::cout << COLOR_ERROR << "[Process terminated by signal: " 
-                        << signal << "]" << COLOR_RESET << "\n";
-                return 128 + signal;
-            }
-        }
-        else {
-            Job job;
-            job.jobId = nextJobId++;
-            job.pgid = pid;
-            job.command = cmd.args[0];
-            job.state = RUNNING;
-            job.pids.push_back(pid);
-            jobTable.push_back(job);
             
-            std::cout << "[" << job.jobId << "] " << pid << "\n";
+            // Restore terminal control to shell
+            tcsetpgrp(shell_terminal, shell_pgid);
+            freeArgv(argv, cmd.args.size());
         }
-        
-        
     }
     
     return 0;
@@ -188,7 +491,9 @@ int executeCommand(const ParsedCommand& cmd) {
 
 int executePipeline(const std::vector<ParsedCommand>& pipeline) {
     int numCmds = pipeline.size();
-    std::vector<std::array<int, 2>> pipefds(numCmds - 1);	// [0]:read [1]:write
+    std::vector<std::array<int, 2>> pipefds(numCmds - 1);
+    std::vector<pid_t> pids;
+    bool isBackground = pipeline[0].isBackground;
     
     // Create all pipes
     for (int i = 0; i < numCmds - 1; i++) {
@@ -198,23 +503,44 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline) {
         }
     }
     
+    pid_t pgid = 0;
+    
     // Fork and execute each command
     for (int i = 0; i < numCmds; i++) {
         pid_t pid = fork();
-        int pgid = setpgid(pid, 0); // Set process group ID
         
         if (pid < 0) {
             std::cerr << COLOR_ERROR << "tinyshell: fork failed" << COLOR_RESET << "\n";
             return -1;
         }
-        else if (pid == 0) {	// Child Process
-            // Setup pipes			
-			// If not first command: read from previous pipe
+        else if (pid == 0) {
+            // Child Process
+            
+            // Set process group
+            if (i == 0) {
+                // First process becomes group leader
+                setpgid(0, 0);
+                if (!isBackground) {
+                    tcsetpgrp(shell_terminal, getpid());
+                }
+            } else {
+                // Join the group
+                setpgid(0, pgid);
+            }
+            
+            // Set default signal handlers
+            signal(SIGINT, SIG_DFL);
+            signal(SIGQUIT, SIG_DFL);
+            signal(SIGTSTP, SIG_DFL);
+            signal(SIGTTIN, SIG_DFL);
+            signal(SIGTTOU, SIG_DFL);
+            signal(SIGCHLD, SIG_DFL);
+            
+            // Setup pipes
             if (i > 0) {
                 dup2(pipefds[i-1][0], STDIN_FILENO);
             }
             
-            // If not last command: write to current pipe
             if (i < numCmds - 1) {
                 dup2(pipefds[i][1], STDOUT_FILENO);
             }
@@ -237,11 +563,18 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline) {
             }
             
             char** argv = vectorToArgv(pipeline[i].args);
-            execve(execPath.c_str(), argv, environ);	// Execute
+            execve(execPath.c_str(), argv, environ);
             
-			// If command does not exist
             std::cerr << COLOR_ERROR << "tinyshell: execve failed" << COLOR_RESET << "\n";
             exit(1);
+        }
+        else {
+            // Parent process
+            if (i == 0) {
+                pgid = pid;
+            }
+            setpgid(pid, pgid);
+            pids.push_back(pid);
         }
     }
     
@@ -251,9 +584,55 @@ int executePipeline(const std::vector<ParsedCommand>& pipeline) {
         close(pipefds[i][1]);
     }
     
-    // Wait for all children
-    for (int i = 0; i < numCmds; i++) {
-        wait(NULL);
+    // Build command string for job
+    std::string cmdString;
+    for (size_t i = 0; i < pipeline.size(); i++) {
+        if (i > 0) cmdString += " | ";
+        cmdString += pipeline[i].args[0];
+    }
+    
+    if (isBackground) {
+        // Background execution
+        addJob(pgid, cmdString, RUNNING, pids);
+    } else {
+        // Foreground execution
+        tcsetpgrp(shell_terminal, pgid);
+        
+        int status;
+        pid_t wait_result;
+        bool pipeline_stopped = false;
+        
+        // Wait for all children
+        for (int i = 0; i < numCmds; i++) {
+            while ((wait_result = waitpid(-pgid, &status, WUNTRACED)) > 0) {
+                if (WIFEXITED(status) || WIFSIGNALED(status)) {
+                    continue;
+                } else if (WIFSTOPPED(status)) {
+                    // Pipeline was stopped
+                    addJob(pgid, cmdString, STOPPED, pids);
+                    
+                    // Get the job we just added to print status
+                    Job* job = getJobByPgid(pgid);
+                    if (job) {
+                        std::cout << "\n[" << job->jobId << "]";
+                        if (job->is_current) {
+                            std::cout << "+";
+                        } else {
+                            std::cout << " ";
+                        }
+                        std::cout << " Stopped         " << job->command << std::endl;
+                    }
+                    pipeline_stopped = true;  // Set flag
+                    break;
+                }
+            }
+            if (pipeline_stopped) {
+                break;
+            }
+        }
+        
+        // Restore terminal control
+        tcsetpgrp(shell_terminal, shell_pgid);
     }
     
     return 0;
@@ -272,12 +651,18 @@ void displayPrompt() {
 int main() {
     std::string line;
     
+    // CRITICAL: Initialize shell BEFORE anything else
+    init_shell();
+    
     std::cout << "=======================================  _____ _____ _____           _____ _____ _____ _____ \n";
     std::cout << "  Welcome to TinyShell                  |   __|     |   __|   ___   |  _  |  |  |_   _|  |  |\n";
     std::cout << "  Type 'exit' or press Ctrl+D to quit   |   __|   --|   __|  |___|  |     |  |  | | | |     |\n";
     std::cout << "======================================= |_____|_____|_____|         |__|__|_____| |_| |__|__|\n\n";
 
     while (true) {
+        // Check for job status changes before prompt
+        check_job_status_changes();
+        
         displayPrompt();
         
         if (!std::getline(std::cin, line)) {
@@ -295,6 +680,13 @@ int main() {
         
         ParsedPipeline pipeline = parseCommandLine(tokens);
         if (pipeline.commands.empty()) continue;
+        
+        // CRITICAL: Propagate background flag to all commands in pipeline
+        if (pipeline.isBackground) {
+            for (auto& cmd : pipeline.commands) {
+                cmd.isBackground = true;
+            }
+        }
         
         // Check for exit command
         for (const auto& cmd : pipeline.commands) {
