@@ -681,7 +681,7 @@ int main() {
         ParsedPipeline pipeline = parseCommandLine(tokens);
         if (pipeline.commands.empty()) continue;
         
-        // CRITICAL: Propagate background flag to all commands in pipeline
+        // Propagate background flag to all commands in pipeline
         if (pipeline.isBackground) {
             for (auto& cmd : pipeline.commands) {
                 cmd.isBackground = true;
